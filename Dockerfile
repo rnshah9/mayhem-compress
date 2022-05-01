@@ -15,7 +15,7 @@ ENV PATH=$PATH:/root/go/bin
 ADD . /mayhem-compress
 WORKDIR /mayhem-compress
 
-RUN goreleaser build --skip-validate --single-target
+RUN goreleaser build --skip-validate --single-target --snapshot
 
 FROM --platform=linux/amd64 ubuntu:20.04
 
