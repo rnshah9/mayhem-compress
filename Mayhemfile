@@ -1,0 +1,6 @@
+project: mayhem-compress
+target: fuzzme
+image: ghcr.io/rnshah9/mayhem-compress
+
+cmds:
+  - cmd: /s2c @@
