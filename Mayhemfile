@@ -1,6 +1,5 @@
 project: mayhem-compress
 target: s2c
-image: ghcr.io/rnshah9/mayhem-compress
 
 cmds:
   - cmd: /s2c @@
