@@ -3,7 +3,7 @@ FROM --platform=linux/amd64 ubuntu:20.04 as builder
 
 ## Install build dependencies.
 RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y  wget tar 
+    DEBIAN_FRONTEND=noninteractive apt-get install -y git wget tar 
 
 RUN wget https://go.dev/dl/go1.18.1.linux-amd64.tar.gz
 RUN tar -C /usr/local -xvf go1.18.1.linux-amd64.tar.gz
