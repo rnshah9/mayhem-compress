@@ -1,4 +1,4 @@
-project: mayhem-compress
+project: compress
 target: s2c
 
 cmds:
