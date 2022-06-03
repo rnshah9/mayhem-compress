@@ -1,0 +1,5 @@
+project: compress
+target: s2c
+
+cmds:
+  - cmd: /s2c @@
