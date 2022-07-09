@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -34,9 +35,15 @@ var (
 	help   = flag.Bool("help", false, "Display help")
 	out    = flag.String("o", "", "Write output to another file. Single input file only")
 	block  = flag.Bool("block", false, "Decompress as a single block. Will load content into memory.")
+	cpu    = flag.Int("cpu", runtime.NumCPU(), "Decompress streams using this amount of threads")
 
 	version = "(dev)"
 	date    = "(unknown)"
+)
+
+const (
+	s2Ext     = ".s2"
+	snappyExt = ".sz" // https://github.com/google/snappy/blob/main/framing_format.txt#L34
 )
 
 func main() {
@@ -51,7 +58,7 @@ func main() {
 			"Copyright (c) 2019+ Klaus Post. All rights reserved.\n\n")
 		_, _ = fmt.Fprintln(os.Stderr, `Usage: s2d [options] file1 file2
 
-Decompresses all files supplied as input. Input files must end with '.s2' or '.snappy'.
+Decompresses all files supplied as input. Input files must end with '`+s2Ext+`' or '`+snappyExt+`'.
 Output file names have the extension removed. By default output files will be overwritten.
 Use - as the only file name to read from stdin and write to stdout.
 
@@ -128,7 +135,8 @@ Options:`)
 				block = true
 			}
 			switch {
-			case strings.HasSuffix(dstFilename, ".s2"):
+			case strings.HasSuffix(dstFilename, s2Ext):
+			case strings.HasSuffix(dstFilename, snappyExt):
 			case strings.HasSuffix(dstFilename, ".snappy"):
 			default:
 				if !isHTTP(filename) {
@@ -160,7 +168,11 @@ Options:`)
 						output = int64(len(dec))
 					} else {
 						r.Reset(bytes.NewBuffer(b))
-						output, err = io.Copy(ioutil.Discard, r)
+						if *cpu > 1 {
+							output, err = r.DecodeConcurrent(ioutil.Discard, *cpu)
+						} else {
+							output, err = io.Copy(ioutil.Discard, r)
+						}
 						exitErr(err)
 					}
 					if !*quiet {
@@ -193,8 +205,10 @@ Options:`)
 		switch {
 		case *out != "":
 			dstFilename = *out
-		case strings.HasSuffix(dstFilename, ".s2"):
-			dstFilename = strings.TrimSuffix(dstFilename, ".s2")
+		case strings.HasSuffix(dstFilename, s2Ext):
+			dstFilename = strings.TrimSuffix(dstFilename, s2Ext)
+		case strings.HasSuffix(dstFilename, snappyExt):
+			dstFilename = strings.TrimSuffix(dstFilename, snappyExt)
 		case strings.HasSuffix(dstFilename, ".snappy"):
 			dstFilename = strings.TrimSuffix(dstFilename, ".snappy")
 		default:
@@ -286,7 +300,13 @@ Options:`)
 				}
 				decoded = r
 			}
-			output, err := io.Copy(out, decoded)
+			var err error
+			var output int64
+			if dec, ok := decoded.(*s2.Reader); ok && tailBytes == 0 && offset == 0 {
+				output, err = dec.DecodeConcurrent(out, *cpu)
+			} else {
+				output, err = io.Copy(out, decoded)
+			}
 			exitErr(err)
 			if !*quiet {
 				elapsed := time.Since(start)

@@ -190,6 +190,9 @@ func TestErrorWriter(t *testing.T) {
 	}
 	wantErr := fmt.Errorf("i'm a failure")
 	zr, err := NewReader(&cmp)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer zr.Close()
 	out := failingWriter{err: wantErr}
 	_, err = zr.WriteTo(out)
@@ -200,17 +203,19 @@ func TestErrorWriter(t *testing.T) {
 
 func TestNewDecoder(t *testing.T) {
 	for _, n := range []int{1, 4} {
-		t.Run(fmt.Sprintf("cpu-%d", n), func(t *testing.T) {
-			newFn := func() (*Decoder, error) {
-				return NewReader(nil, WithDecoderConcurrency(n))
-			}
-			testDecoderFile(t, "testdata/decoder.zip", newFn)
-			dec, err := newFn()
-			if err != nil {
-				t.Fatal(err)
-			}
-			testDecoderDecodeAll(t, "testdata/decoder.zip", dec)
-		})
+		for _, ignoreCRC := range []bool{false, true} {
+			t.Run(fmt.Sprintf("cpu-%d", n), func(t *testing.T) {
+				newFn := func() (*Decoder, error) {
+					return NewReader(nil, WithDecoderConcurrency(n), IgnoreChecksum(ignoreCRC))
+				}
+				testDecoderFile(t, "testdata/decoder.zip", newFn)
+				dec, err := newFn()
+				if err != nil {
+					t.Fatal(err)
+				}
+				testDecoderDecodeAll(t, "testdata/decoder.zip", dec)
+			})
+		}
 	}
 }
 
@@ -1317,7 +1322,7 @@ func BenchmarkDecoder_DecodeAllFilesP(b *testing.B) {
 					if err != nil {
 						b.Error(err)
 					}
-					_, err = dec.DecodeAll(encoded, nil)
+					raw, err := dec.DecodeAll(encoded, nil)
 					if err != nil {
 						b.Error(err)
 					}
@@ -1326,7 +1331,7 @@ func BenchmarkDecoder_DecodeAllFilesP(b *testing.B) {
 					b.ReportAllocs()
 					b.ResetTimer()
 					b.RunParallel(func(pb *testing.PB) {
-						buf := make([]byte, len(raw))
+						buf := make([]byte, cap(raw))
 						var err error
 						for pb.Next() {
 							buf, err = dec.DecodeAll(encoded, buf[:0])
@@ -1373,7 +1378,7 @@ func BenchmarkDecoder_DecodeAllParallel(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
-				got := make([]byte, len(got))
+				got := make([]byte, cap(got))
 				for pb.Next() {
 					_, err = dec.DecodeAll(in, got[:0])
 					if err != nil {
@@ -1400,12 +1405,7 @@ func benchmarkDecoderWithFile(path string, b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	dec, err := NewReader(nil, WithDecoderLowmem(false))
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer dec.Close()
-	err = dec.Reset(bytes.NewBuffer(data))
+	dec, err := NewReader(bytes.NewBuffer(data), WithDecoderLowmem(false), WithDecoderConcurrency(1))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -1414,19 +1414,110 @@ func benchmarkDecoderWithFile(path string, b *testing.B) {
 		b.Fatal(err)
 	}
 
-	b.SetBytes(n)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		err = dec.Reset(bytes.NewBuffer(data))
+	b.Run("multithreaded-writer", func(b *testing.B) {
+		dec, err := NewReader(nil, WithDecoderLowmem(true))
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err := io.CopyN(ioutil.Discard, dec, n)
+		b.SetBytes(n)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			err = dec.Reset(bytes.NewBuffer(data))
+			if err != nil {
+				b.Fatal(err)
+			}
+			_, err := io.CopyN(ioutil.Discard, dec, n)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("multithreaded-writer-himem", func(b *testing.B) {
+		dec, err := NewReader(nil, WithDecoderLowmem(false))
 		if err != nil {
 			b.Fatal(err)
 		}
-	}
+
+		b.SetBytes(n)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			err = dec.Reset(bytes.NewBuffer(data))
+			if err != nil {
+				b.Fatal(err)
+			}
+			_, err := io.CopyN(ioutil.Discard, dec, n)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("singlethreaded-writer", func(b *testing.B) {
+		dec, err := NewReader(nil, WithDecoderConcurrency(1), WithDecoderLowmem(true))
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		b.SetBytes(n)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			err = dec.Reset(bytes.NewBuffer(data))
+			if err != nil {
+				b.Fatal(err)
+			}
+			_, err := io.CopyN(ioutil.Discard, dec, n)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("singlethreaded-writerto", func(b *testing.B) {
+		dec, err := NewReader(nil, WithDecoderConcurrency(1), WithDecoderLowmem(true))
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		b.SetBytes(n)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			err = dec.Reset(bytes.NewBuffer(data))
+			if err != nil {
+				b.Fatal(err)
+			}
+			// io.Copy will use io.WriterTo
+			_, err := io.Copy(ioutil.Discard, dec)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("singlethreaded-himem", func(b *testing.B) {
+		dec, err := NewReader(nil, WithDecoderConcurrency(1), WithDecoderLowmem(false))
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		b.SetBytes(n)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			err = dec.Reset(bytes.NewBuffer(data))
+			if err != nil {
+				b.Fatal(err)
+			}
+			// io.Copy will use io.WriterTo
+			_, err := io.Copy(ioutil.Discard, dec)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }
 
 func BenchmarkDecoderSilesia(b *testing.B) {
@@ -1738,7 +1829,7 @@ func TestResetNil(t *testing.T) {
 }
 
 func TestIgnoreChecksum(t *testing.T) {
-	// zstd file containing text "compress\n" and has a xxhash checksum
+	// zstd file containing text "compress\n" and has an xxhash checksum
 	zstdBlob := []byte{0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x09, 0x49, 0x00, 0x00, 'C', 'o', 'm', 'p', 'r', 'e', 's', 's', '\n', 0x79, 0x6e, 0xe0, 0xd2}
 
 	// replace letter 'c' with 'C', so decoding should fail.

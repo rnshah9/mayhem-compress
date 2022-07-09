@@ -196,12 +196,13 @@ func (w *GzipResponseWriter) startGzip() error {
 
 // startPlain writes to sent bytes and buffer the underlying ResponseWriter without gzip.
 func (w *GzipResponseWriter) startPlain() error {
+	w.Header().Del(HeaderNoCompression)
 	if w.code != 0 {
 		w.ResponseWriter.WriteHeader(w.code)
 		// Ensure that no other WriteHeader's happen
 		w.code = 0
 	}
-	delete(w.Header(), HeaderNoCompression)
+
 	w.ignore = true
 	// If Write was never called then don't call Write on the underlying ResponseWriter.
 	if len(w.buf) == 0 {
@@ -677,10 +678,11 @@ func parseCoding(s string) (coding string, qvalue float64, err error) {
 }
 
 // Don't compress any audio/video types.
-var excludePrefixDefault = []string{"video/", "audio/"}
+var excludePrefixDefault = []string{"video/", "audio/", "image/jp"}
 
 // Skip a bunch of compressed types that contains this string.
-var excludeContainsDefault = []string{"compress", "zip"}
+// Curated by supposedly still active formats on https://en.wikipedia.org/wiki/List_of_archive_formats
+var excludeContainsDefault = []string{"compress", "zip", "snappy", "lzma", "xz", "zstd", "brotli", "stuffit"}
 
 // DefaultContentTypeFilter excludes common compressed audio, video and archive formats.
 func DefaultContentTypeFilter(ct string) bool {
